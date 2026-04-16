@@ -10,59 +10,118 @@
 
 ---
 
-## 🚀 Key Modules
+## 🚀 Key Modules & Technical Depth
 
-| Module | Description | Icon |
-| :--- | :--- | :---: |
-| **Strategic Command** | High-level overview and regional distribution management. | 🏛️ |
-| **Logistics Engine** | Automated request, approval, and dispatch workflows. | 🚛 |
-| **Arsenal Control** | Precision tracking of weapons, medical supplies, and rations. | 🔫 |
-| **Audit & Compliance** | Full-spectrum audit logs and transaction history tracking. | 📜 |
-| **Alert System** | Proactive notifications for low stock, expiry, and maintenance. | ⚠️ |
+### 🏛️ Strategic Command (Hierarchical Units)
+MIMS utilizes a recursive tree structure to model the military command chain.
+- **Recursive Hierarchy**: Units can have parent and children units (e.g., Central Command -> Regional Depot -> Army Base).
+- **Command Levels**: Integrated logic for `CENTRAL_COMMAND`, `REGIONAL_DEPOT`, and `ARMY_BASE`.
+
+### 🚛 Logistics Engine (Supply Requests)
+A robust workflow for requesting and transferring resources between units.
+- **Supply Requests**: Units can request items from parent or peer units.
+- **Multi-stage Approval**: Requests move through `PENDING`, `APPROVED`, `DISPATCHED`, and `REJECTED` states.
+- **Emergency Flag**: Prioritization of critical supply requests.
+
+### 🔫 Arsenal Control (Inventory & Batches)
+Precision tracking of items with granular batch management.
+- **Stock Tracking**: Real-time quantity tracking at the unit level with `reservedQty` logic.
+- **Batch Management**: Tracking `manufactureDate`, `expiryDate`, and `maintenanceDueDate` for every batch.
+- **Automated Alerts**: Low stock and upcoming expiry notifications based on `minThreshold`.
+
+### 📜 Audit & Compliance
+Full-spectrum accountability for every action taken in the system.
+- **Audit Logs**: Deep tracking of `ActionType` (CREATE, UPDATE, DELETE, TRANSFER) with `oldData` and `newData` JSON snapshots.
+- **Login History**: Tracking IP addresses, User Agents, and failed login attempts to prevent unauthorized access.
 
 ---
 
-## 🏗️ Technical Architecture
+## 🔄 Supply Request Workflow
 
 ```mermaid
-graph TD
-    User((User)) --> NextJS[Next.js 15 Frontend/API]
-    NextJS --> NextAuth[NextAuth.js]
-    NextJS --> Prisma[Prisma ORM]
-    Prisma --> DB[(PostgreSQL)]
-    NextJS --> Resend[Resend Email Service]
-    NextJS --> UploadThing[UploadThing Assets]
+sequenceDiagram
+    participant B as Base Officer
+    participant R as Regional Admin
+    participant I as Inventory (Stock)
+
+    B->>R: Initiate Supply Request (Item + Qty)
+    Note over R: Status: PENDING
+    R->>I: Check Stock Availability
+    alt Stock Available
+        R->>R: Approve & Reserved Qty
+        Note over R: Status: APPROVED
+        R->>I: Dispatch Items & Update Inventory
+        Note over R: Status: DISPATCHED
+    else Out of Stock
+        R->>B: Reject Request
+        Note over R: Status: REJECTED
+    end
 ```
 
 ---
 
-## 📊 Database Schema (ERD)
+## 📊 Detailed Entity Relationship Diagram (ERD)
 
 ```mermaid
 erDiagram
-    USER ||--o{ REQUEST : creates
-    USER ||--o{ AUDIT_LOG : generates
-    UNIT ||--o{ USER : contains
-    UNIT ||--o{ STOCK_ITEM : holds
-    UNIT ||--o{ REQUEST : "origin/target"
-    ITEM ||--o{ STOCK_ITEM : defines
-    BATCH ||--o{ TRANSACTION : logs
-    REQUEST ||--|{ REQUEST_ITEM : includes
-    TRANSFER ||--o{ TRANSACTION : triggers
+    USER ||--o{ LOGIN_HISTORY : "tracks logins"
+    USER ||--o{ REQUEST : "creates"
+    USER ||--o{ APPROVAL_LOG : "reviews"
+    USER ||--o{ AUDIT_LOG : "performs actions"
+    
+    UNIT ||--o{ USER : "houses"
+    UNIT ||--o{ STOCK_ITEM : "manages"
+    UNIT ||--o{ REQUEST : "source/target"
+    UNIT ||--o{ ALERT : "receives"
+    
+    ITEM ||--o{ STOCK_ITEM : "defined as"
+    ITEM ||--o{ BATCH : "stored in"
+    ITEM ||--o{ REQUEST_ITEM : "requested"
+    
+    BATCH ||--o{ TRANSACTION : "records flow"
+    
+    REQUEST ||--|{ REQUEST_ITEM : "contains"
+    REQUEST ||--o{ APPROVAL_LOG : "history"
+    
+    TRANSFER ||--o{ TRANSACTION : "executes"
+    
+    STOCK_ITEM {
+        string baseId FK
+        string itemId FK
+        int quantity
+        int reservedQty
+    }
+    
+    BATCH {
+        string batchCode UK
+        int remainingQty
+        datetime expiryDate
+    }
+    
+    USER {
+        string email UK
+        enum role
+        enum commandLevel
+    }
+    
+    AUDIT_LOG {
+        string tableName
+        string action
+        json oldData
+        json newData
+    }
 ```
 
 ---
 
-## 🛠️ Tech Stack
+## 🛠️ Tech Stack & Security
 
-- **Framework**: [Next.js 15](https://nextjs.org/) (App Router)
-- **Database**: [PostgreSQL](https://www.postgresql.org/)
-- **ORM**: [Prisma](https://www.prisma.io/)
-- **Auth**: [NextAuth.js](https://next-auth.js.org/)
-- **Styling**: [Tailwind CSS](https://tailwindcss.com/)
-- **UI Components**: [Lucide React](https://lucide.dev/)
-- **Security**: Argon2/Bcrypt Password Hashing, Multi-level RBAC (Role-Based Access Control)
-- **Validation**: [Zod](https://zod.dev/)
+- **Framework**: [Next.js 15](https://nextjs.org/) (App Router & Server Actions)
+- **Database**: [PostgreSQL](https://www.postgresql.org/) with [Prisma ORM](https://www.prisma.io/)
+- **Authentication**: [NextAuth.js](https://next-auth.js.org/) with custom credentials provider.
+- **Asset Management**: [UploadThing](https://uploadthing.com/) for profile avatars and manual documents.
+- **Transactional Integrity**: Every stock movement is logged as a `Transaction` tied to a specific `Batch` or `Transfer`.
+- **RBAC**: Strict Role-Based Access Control enforcing command level boundaries.
 
 ---
 
@@ -70,60 +129,48 @@ erDiagram
 
 ```text
 mims/
-├── prisma/               # Database Schema & Seed scripts
+├── prisma/               # Schema Design & Seed Data
 ├── src/
-│   ├── app/              # Next.js Pages & API Routes
-│   ├── features/         # Core business logic & slices
-│   ├── shared/           # Reusable components & utilities
-│   │   ├── components/   # UI Library (Topbar, Sidebar, etc.)
-│   │   ├── lib/          # API Clients (Prisma, Auth, Resend)
-│   │   └── types/        # Global TypeScript definitions
+│   ├── app/              # Next.js Routes (Auth, Dashboard, Inventory)
+│   ├── features/         # Modular Business Logic
+│   │   ├── inventory/    # Stock & Batch management
+│   │   ├── requests/     # Supply Chain workflows
+│   │   └── transfers/    # Peer-to-peer asset movement
+│   ├── shared/           # Cross-cutting concerns
+│   │   ├── components/   # UI System (Shadcn-like)
+│   │   └── lib/          # Database & Utility singletons
 ```
 
 ---
 
 ## 🏁 Getting Started
 
-### 1. Clone the repository
+### 1. Prerequisites
+- Node.js 18+
+- PostgreSQL Instance
+
+### 2. Installation
 ```bash
 git clone https://github.com/Vishaldubey2210/DBMS_Project.git
-cd mims
-```
-
-### 2. Install dependencies
-```bash
 npm install
 ```
 
-### 3. Setup Environment Variables
-Create a `.env` file in the root directory:
+### 3. Environment Configuration
+Create a `.env` file:
 ```env
-DATABASE_URL="postgresql://user:password@localhost:5432/mims"
-NEXTAUTH_SECRET="your-secret"
-RESEND_API_KEY="re_..."
+DATABASE_URL="postgresql://..."
+NEXTAUTH_SECRET="..."
+RESEND_API_KEY="..."
 ```
 
-### 4. Database Setup
+### 4. Database Sync
 ```bash
 npx prisma generate
 npx prisma db push
 npm run seed
 ```
 
-### 5. Run Development Server
-```bash
-npm run dev
-```
-
 ---
 
-## 🛡️ Security & Roles
-MIMS implements a strict **Command Hierarchy**:
-- **SUPER_ADMIN**: Full system orchestration.
-- **REGIONAL_ADMIN**: Manages Regional Depots and distributions.
-- **BASE_OFFICER**: Handles local unit inventory and requests.
-- **AUDITOR**: Read-only oversight with full log access.
-
----
-
-Built with ❤️ for **DBMS Final Project**.
+Built with ❤️ for **DBMS Final Project**.  
+*Military Grade Inventory at your fingertips.*
