@@ -1,0 +1,6 @@
+| Role           | Email            | Password   |
+| -------------- | ---------------- | ---------- |
+| Super Admin    | admin@army.in    | Admin@123  |
+| Regional Admin | regional@army.in | Region@123 |
+| Base Officer   | officer@army.in  | Base@1234  |
+| Auditor        | auditor@army.in  | Audit@123  |

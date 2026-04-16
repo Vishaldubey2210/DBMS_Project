@@ -1,0 +1,287 @@
+// prisma/schema.prisma
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["driverAdapters"]
+  output          = "../node_modules/.prisma/client"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─── Enums ───────────────────────────────────────────────
+
+enum Role {
+  SUPER_ADMIN
+  REGIONAL_ADMIN
+  BASE_OFFICER
+  AUDITOR
+}
+
+enum CommandLevel {
+  CENTRAL_COMMAND
+  REGIONAL_DEPOT
+  ARMY_BASE
+}
+
+enum ItemCategory {
+  WEAPONS
+  FOOD
+  MEDICAL
+}
+
+enum RequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  DISPATCHED
+}
+
+enum AlertType {
+  LOW_STOCK
+  EXPIRY
+  MAINTENANCE_DUE
+}
+
+enum ActionType {
+  CREATE
+  UPDATE
+  DELETE
+  TRANSFER
+  APPROVE
+  REJECT
+}
+
+// ─── Models ──────────────────────────────────────────────
+
+model User {
+  id             String       @id @default(cuid())
+  name           String
+  email          String       @unique
+  passwordHash   String       @map("password_hash")
+  role           Role
+  commandLevel   CommandLevel @map("command_level")
+  unitId         String?      @map("unit_id")
+  unit           Unit?        @relation(fields: [unitId], references: [id])
+  avatarUrl      String?      @map("avatar_url")
+  failedAttempts Int          @default(0) @map("failed_attempts")
+  lockedUntil    DateTime?    @map("locked_until")
+  lastLoginAt    DateTime?    @map("last_login_at")
+  isActive       Boolean      @default(true) @map("is_active")
+  createdAt      DateTime     @default(now()) @map("created_at")
+  updatedAt      DateTime     @updatedAt @map("updated_at")
+
+  loginHistories  LoginHistory[]
+  requestsCreated Request[]      @relation("CreatedBy")
+  approvalLogs    ApprovalLog[]
+  auditLogs       AuditLog[]
+  transfers       Transfer[]
+
+  @@index([email])
+  @@map("users")
+}
+
+model LoginHistory {
+  id        String   @id @default(cuid())
+  userId    String   @map("user_id")
+  user      User     @relation(fields: [userId], references: [id])
+  ipAddress String?  @map("ip_address")
+  userAgent String?  @map("user_agent")
+  success   Boolean
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([userId])
+  @@map("login_histories")
+}
+
+model Unit {
+  id        String       @id @default(cuid())
+  name      String       @unique
+  code      String?      @unique
+  level     CommandLevel
+  parentId  String?      @map("parent_id")
+  parent    Unit?        @relation("UnitHierarchy", fields: [parentId], references: [id])
+  children  Unit[]       @relation("UnitHierarchy")
+  createdAt DateTime     @default(now()) @map("created_at")
+
+  users         User[]
+  stockItems    StockItem[]
+  requestsFrom  Request[]     @relation("FromUnit")
+  requestsTo    Request[]     @relation("ToUnit")
+  transfersFrom Transfer[]    @relation("FromUnit")
+  transfersTo   Transfer[]    @relation("ToUnit")
+  alerts        Alert[]
+  transactions  Transaction[]
+
+  @@map("units")
+}
+
+model Item {
+  id             String       @id @default(cuid())
+  name           String
+  code           String       @unique
+  category       ItemCategory
+  unit           String
+  minThreshold   Int          @map("min_threshold")
+  specifications Json?
+  isDeleted      Boolean      @default(false) @map("is_deleted")
+  deletedAt      DateTime?    @map("deleted_at")
+  createdAt      DateTime     @default(now()) @map("created_at")
+  updatedAt      DateTime     @updatedAt @map("updated_at")
+
+  stockItems   StockItem[]
+  batches      Batch[]
+  requestItems RequestItem[]
+  alerts       Alert[]
+  transfers    Transfer[]
+
+  @@index([category])
+  @@map("items")
+}
+
+model StockItem {
+  id          String   @id @default(cuid())
+  baseId      String   @map("base_id")
+  base        Unit     @relation(fields: [baseId], references: [id])
+  itemId      String   @map("item_id")
+  item        Item     @relation(fields: [itemId], references: [id])
+  quantity    Int      @default(0)
+  reservedQty Int      @default(0) @map("reserved_qty")
+  lastUpdated DateTime @default(now()) @updatedAt @map("last_updated")
+
+  @@unique([baseId, itemId], name: "baseId_itemId")
+  @@index([baseId, itemId])
+  @@map("stock_items")
+}
+
+model Batch {
+  id                 String    @id @default(cuid())
+  itemId             String    @map("item_id")
+  item               Item      @relation(fields: [itemId], references: [id])
+  batchCode          String    @unique @map("batch_code")
+  quantity           Int
+  remainingQty       Int       @map("remaining_qty")
+  manufactureDate    DateTime? @map("manufacture_date")
+  expiryDate         DateTime? @map("expiry_date")
+  maintenanceDueDate DateTime? @map("maintenance_due_date")
+  receivedAt         DateTime  @default(now()) @map("received_at")
+  isExhausted        Boolean   @default(false) @map("is_exhausted")
+
+  transactions Transaction[]
+
+  @@index([itemId, expiryDate])
+  @@map("batches")
+}
+
+model Request {
+  id          String        @id @default(cuid())
+  fromUnitId  String        @map("from_unit_id")
+  fromUnit    Unit          @relation("FromUnit", fields: [fromUnitId], references: [id])
+  toUnitId    String        @map("to_unit_id")
+  toUnit      Unit          @relation("ToUnit", fields: [toUnitId], references: [id])
+  createdById String        @map("created_by_id")
+  createdBy   User          @relation("CreatedBy", fields: [createdById], references: [id])
+  status      RequestStatus @default(PENDING)
+  isEmergency Boolean       @default(false) @map("is_emergency")
+  remarks     String?
+  createdAt   DateTime      @default(now()) @map("created_at")
+  updatedAt   DateTime      @updatedAt @map("updated_at")
+
+  items        RequestItem[]
+  approvalLogs ApprovalLog[]
+
+  @@index([status, fromUnitId])
+  @@map("requests")
+}
+
+model RequestItem {
+  id        String  @id @default(cuid())
+  requestId String  @map("request_id")
+  request   Request @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  itemId    String  @map("item_id")
+  item      Item    @relation(fields: [itemId], references: [id])
+  quantity  Int
+  approved  Int?
+
+  @@map("request_items")
+}
+
+model ApprovalLog {
+  id         String   @id @default(cuid())
+  requestId  String   @map("request_id")
+  request    Request  @relation(fields: [requestId], references: [id])
+  approvedBy String   @map("approved_by")
+  approver   User     @relation(fields: [approvedBy], references: [id])
+  action     String
+  remarks    String?
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@map("approval_logs")
+}
+
+model Transfer {
+  id          String   @id @default(cuid())
+  fromUnitId  String   @map("from_unit_id")
+  fromUnit    Unit     @relation("FromUnit", fields: [fromUnitId], references: [id])
+  toUnitId    String   @map("to_unit_id")
+  toUnit      Unit     @relation("ToUnit", fields: [toUnitId], references: [id])
+  initiatedBy String   @map("initiated_by")
+  initiator   User     @relation(fields: [initiatedBy], references: [id])
+  itemId      String   @map("item_id")
+  item        Item     @relation(fields: [itemId], references: [id])
+  quantity    Int
+  remarks     String?
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  transactions Transaction[]
+
+  @@map("transfers")
+}
+
+model Transaction {
+  id         String    @id @default(cuid())
+  batchId    String?   @map("batch_id")
+  batch      Batch?    @relation(fields: [batchId], references: [id])
+  transferId String?   @map("transfer_id")
+  transfer   Transfer? @relation(fields: [transferId], references: [id])
+  type       String
+  quantity   Int
+  baseId     String    @map("base_id")
+  base       Unit      @relation(fields: [baseId], references: [id])
+  createdAt  DateTime  @default(now()) @map("created_at")
+
+  @@index([baseId, createdAt])
+  @@map("transactions")
+}
+
+model AuditLog {
+  id        String     @id @default(cuid())
+  userId    String     @map("user_id")
+  user      User       @relation(fields: [userId], references: [id])
+  tableName String     @map("table_name")
+  recordId  String     @map("record_id")
+  action    ActionType
+  oldData   Json?      @map("old_data")
+  newData   Json?      @map("new_data")
+  ipAddress String?    @map("ip_address")
+  createdAt DateTime   @default(now()) @map("created_at")
+
+  @@index([tableName, recordId])
+  @@index([userId, createdAt])
+  @@map("audit_logs")
+}
+
+model Alert {
+  id        String    @id @default(cuid())
+  unitId    String    @map("unit_id")
+  unit      Unit      @relation(fields: [unitId], references: [id])
+  type      AlertType
+  message   String
+  itemId    String?   @map("item_id")
+  item      Item?     @relation(fields: [itemId], references: [id])
+  isRead    Boolean   @default(false) @map("is_read")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  @@index([unitId, isRead])
+  @@map("alerts")
+}
